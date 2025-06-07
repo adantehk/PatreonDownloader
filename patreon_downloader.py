@@ -3,11 +3,16 @@ import os
 import json
 import webbrowser
 import http.server
+# It's highly recommended to ensure your patreon library is up-to-date:
+# pip install --upgrade patreon
+# This can help resolve potential AttributeError issues and ensure proper exception handling.
+
 import socketserver
 from urllib.parse import urlparse, parse_qs
 import requests
 from bs4 import BeautifulSoup
 import re
+import traceback # For detailed error reporting
 
 TOKEN_FILE = "patreon_tokens.json"
 DOWNLOAD_DIR = "downloaded_posts"
@@ -309,6 +314,7 @@ def fetch_posts(api_client, campaign_id):
 
     try:
         while True:
+            print(f"\nFetching page of posts (cursor: {cursor})...")
             # Include more fields for content and relationships for media
             response = api_client.get_posts_by_campaign(
                 campaign_id,
@@ -324,11 +330,12 @@ def fetch_posts(api_client, campaign_id):
 
             posts_data = response.data()
             if not posts_data:
-                print("No more posts found.")
+                print("No more posts found on this page or campaign.")
                 break
 
             # Process included data for easier lookup
-            included_data = {item.id(): item for item in response.included()}
+            included_data = {item.id(): item for item in response.included()} if response.included() else {}
+
 
             for post_obj in posts_data:
                 all_posts_processed_count += 1
@@ -409,28 +416,32 @@ def fetch_posts(api_client, campaign_id):
 
         print(f"\nProcessed a total of {all_posts_processed_count} posts for campaign {campaign_id}.")
         if all_posts_processed_count == 0:
-            print("No posts were found for this campaign, or you may not have access to them.")
+            print("No posts were found for this campaign, or you may not have access to them (or the campaign is empty).")
 
-    except patreon.APIException as e:
-        print(f"Patreon API error while fetching posts: {e}")
-        if hasattr(e, 'response') and e.response is not None:
+    except requests.exceptions.HTTPError as e:
+        print(f"A Patreon API HTTP error occurred while fetching posts: {e}")
+        if e.response is not None:
+            print(f"Status Code: {e.response.status_code}")
+            try:
+                error_details = e.response.json()
+                print(f"Error details: {error_details}")
+            except ValueError: # If response is not JSON
+                print(f"Error response (text): {e.response.text}")
+
             if e.response.status_code == 401:
-                print("Authentication error. Your access token might be invalid or expired.")
-                print(f"Consider deleting {TOKEN_FILE} and re-running the script to authenticate.")
+                print(f"Authentication error (401): Your access token might be invalid or expired. Consider deleting {TOKEN_FILE} and re-running the script.")
             elif e.response.status_code == 403:
-                print("Forbidden error. You may not have permission to access these posts or campaign details.")
+                print("Forbidden (403): You may not have permission to access these posts or campaign details. Check your patronage status for this creator.")
             elif e.response.status_code == 404:
-                print("Campaign not found or posts not found. Please check the Campaign ID and ensure it's correct.")
-            else:
-                print(f"API Error Status Code: {e.response.status_code}, Details: {e.response.text}")
+                print("Not Found (404): The campaign or posts could not be found. Please verify the Campaign ID.")
         else:
-            print(f"Patreon API error with no response object: {e}")
-    except requests.exceptions.RequestException as e:
-        print(f"Network error during asset download: {e}")
+            print("HTTPError occurred but e.response is None.")
+
+    except requests.exceptions.RequestException as e: # Handles network errors like DNS failure, refused connection
+        print(f"A network error occurred during posts fetching or asset download: {e}")
     except Exception as e:
         print(f"An unexpected error occurred in fetch_posts: {e}")
-        import traceback
-        traceback.print_exc()
+        print(traceback.format_exc())
 
 
 # --- Main Execution ---
@@ -445,25 +456,42 @@ if __name__ == "__main__":
         api_client = patreon.API(access_token)
 
         # --- Get User Identity (Optional, good for checking token) ---
+        # Advise user to update patreon library if AttributeErrors occur here.
         try:
-            print("Fetching user identity to confirm token validity...")
+            print("Fetching user identity to confirm token validity (ensure 'patreon' library is up-to-date)...")
             user_response = api_client.get_identity(includes=['memberships'])
             user_data = user_response.data()
             if user_data:
                 user_name = user_data.attribute('full_name')
                 print(f"Authenticated as: {user_name}")
             else:
-                print("Could not retrieve user data with the current token.")
+                # This case might happen if the token is technically valid but yields no data.
+                print("Could not retrieve user data with the current token, though the call was successful.")
             # Future enhancement: Use user_response.data().relationship('memberships') to help find campaign_id
-        except patreon.APIException as e:
-            print(f"Error fetching user identity: {e}")
-            if hasattr(e, 'response') and e.response is not None and e.response.status_code == 401:
-                 print(f"The access token is invalid or expired. Please delete {TOKEN_FILE} and re-run to authenticate.")
+        except requests.exceptions.HTTPError as e:
+            print(f"A Patreon API HTTP error occurred while fetching user identity: {e}")
+            if e.response is not None:
+                print(f"Status Code: {e.response.status_code}")
+                try:
+                    error_details = e.response.json()
+                    print(f"Error details: {error_details}")
+                except ValueError:
+                    print(f"Error response (text): {e.response.text}")
+                if e.response.status_code == 401:
+                    print(f"Authentication error (401): The access token is invalid or expired. Please delete {TOKEN_FILE} and re-run to authenticate.")
+                else:
+                    print("The token might be invalid or there could be network issues.")
             else:
-                print("An API error occurred. The token might be invalid or there could be network issues.")
-            # exit() # Decide if script should exit if identity check fails
+                print("HTTPError occurred but e.response is None.")
+            # Potentially exit if identity check fails critically
+            # print("Exiting due to identity check failure.")
+            # exit()
+        except AttributeError as e:
+            print(f"An AttributeError occurred while fetching user identity: {e}")
+            print("This might be due to an outdated 'patreon' library. Try running: pip install --upgrade patreon")
         except Exception as e:
-            print(f"Unexpected error fetching user identity: {e}")
+            print(f"An unexpected error occurred while fetching user identity: {e}")
+            print(traceback.format_exc())
 
 
         # --- Fetch Posts from a Campaign ---
