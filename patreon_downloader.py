@@ -3,9 +3,8 @@ import os
 import json
 import webbrowser
 import http.server
-# It's highly recommended to ensure your patreon library is up-to-date:
-# pip install --upgrade patreon
-# This can help resolve potential AttributeError issues and ensure proper exception handling.
+# Ensure all dependencies from requirements.txt are installed.
+# This script is written targeting patreon library version 0.5.0.
 
 import socketserver
 from urllib.parse import urlparse, parse_qs
@@ -316,30 +315,18 @@ def fetch_posts(api_client, campaign_id):
         while True:
             print(f"\nFetching page of posts (cursor: {cursor})...")
             # Include more fields for content and relationships for media
-            try:
-                response = api_client.get_posts_by_campaign(
-                    campaign_id,
-                    params={'page[cursor]': cursor if cursor else '', 'sort': '-published_at'},
-                    includes=['user', 'images', 'attachments'], # 'images' for post images, 'attachments' for other files
-                    fields={
-                        'post': ['title', 'content', 'published_at', 'url', 'embed_data', 'embed_url', 'is_public'], # 'content' is usually HTML
-                        'user': ['full_name'],
-                        'attachment': ['name', 'url'], # For attachments
-                        'media': ['download_url', 'file_name', 'mimetype'] # For images often under 'images' relationship or via media API
-                    }
-                )
-                # response.load() # Not always necessary, data() call below usually loads.
-            except AttributeError as e:
-                if 'get_posts_by_campaign' in str(e).lower(): # Make check case-insensitive
-                    print("\nERROR: Your version of the 'patreon' library is outdated and missing the 'get_posts_by_campaign' feature.")
-                    print("This is essential for fetching posts.")
-                    print("Please update the library by running: pip install --upgrade patreon")
-                    print(f"Details: {e}\n")
-                else:
-                    # An AttributeError not related to get_posts_by_campaign occurred
-                    print(f"An unexpected AttributeError occurred during API call setup or execution: {e}")
-                    print(traceback.format_exc())
-                return # Exit fetch_posts if this critical call fails
+            # Using fetch_posts as per patreon library v0.5.0
+            response = api_client.fetch_posts(
+                campaign_id=campaign_id,
+                params={'page[cursor]': cursor if cursor else '', 'sort': '-published_at'},
+                includes=['user', 'images', 'attachments'], # 'images' for post images, 'attachments' for other files
+                fields={
+                    'post': ['title', 'content', 'published_at', 'url', 'embed_data', 'embed_url', 'is_public'], # 'content' is usually HTML
+                    'user': ['full_name'],
+                    'attachment': ['name', 'url'], # For attachments
+                    'media': ['download_url', 'file_name', 'mimetype'] # For images often under 'images' relationship or via media API
+                }
+            )
 
             posts_data = response.data()
             if not posts_data:
@@ -422,9 +409,10 @@ def fetch_posts(api_client, campaign_id):
 
                 generate_post_html(post_data_for_html, downloaded_asset_details, campaign_download_dir, sanitize_filename(post_id_str))
 
-            cursor = api_client.extract_cursor(response)
+            # Update cursor logic for patreon v0.5.0
+            cursor = response.links().get('next') if response.links() else None
             if not cursor:
-                print("\nNo more pages of posts.")
+                print("\nNo more pages of posts (no 'next' link).")
                 break
 
         print(f"\nProcessed a total of {all_posts_processed_count} posts for campaign {campaign_id}.")
@@ -469,16 +457,15 @@ if __name__ == "__main__":
         api_client = patreon.API(access_token)
 
         # --- Get User Identity (Optional, good for checking token) ---
-        # Advise user to update patreon library if AttributeErrors occur here.
         try:
-            print("Fetching user identity to confirm token validity (ensure 'patreon' library is up-to-date)...")
-            user_response = api_client.get_identity(includes=['memberships'])
+            print("Fetching user identity to confirm token validity...")
+            # Using fetch_user as per patreon library v0.5.0
+            user_response = api_client.fetch_user(includes=['memberships'])
             user_data = user_response.data()
             if user_data:
                 user_name = user_data.attribute('full_name')
                 print(f"Authenticated as: {user_name}")
             else:
-                # This case might happen if the token is technically valid but yields no data.
                 print("Could not retrieve user data with the current token, though the call was successful.")
             # Future enhancement: Use user_response.data().relationship('memberships') to help find campaign_id
         except requests.exceptions.HTTPError as e:
@@ -488,20 +475,21 @@ if __name__ == "__main__":
                 try:
                     error_details = e.response.json()
                     print(f"Error details: {error_details}")
-                except ValueError:
+                except ValueError: # If response is not JSON
                     print(f"Error response (text): {e.response.text}")
                 if e.response.status_code == 401:
                     print(f"Authentication error (401): The access token is invalid or expired. Please delete {TOKEN_FILE} and re-run to authenticate.")
                 else:
-                    print("The token might be invalid or there could be network issues.")
+                    print("The token might be invalid or there could be network issues (other HTTP error).")
             else:
                 print("HTTPError occurred but e.response is None.")
             # Potentially exit if identity check fails critically
             # print("Exiting due to identity check failure.")
             # exit()
-        except AttributeError as e:
+        except AttributeError as e: # Catching general AttributeErrors that might still occur with library interactions
             print(f"An AttributeError occurred while fetching user identity: {e}")
-            print("This might be due to an outdated 'patreon' library. Try running: pip install --upgrade patreon")
+            print("This could indicate an issue with the library version or unexpected API response structure.")
+            print(traceback.format_exc())
         except Exception as e:
             print(f"An unexpected error occurred in main fetch_posts loop: {e}")
             print(traceback.format_exc())
