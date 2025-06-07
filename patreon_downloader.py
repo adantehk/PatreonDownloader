@@ -316,17 +316,30 @@ def fetch_posts(api_client, campaign_id):
         while True:
             print(f"\nFetching page of posts (cursor: {cursor})...")
             # Include more fields for content and relationships for media
-            response = api_client.get_posts_by_campaign(
-                campaign_id,
-                params={'page[cursor]': cursor if cursor else '', 'sort': '-published_at'},
-                includes=['user', 'images', 'attachments'], # 'images' for post images, 'attachments' for other files
-                fields={
-                    'post': ['title', 'content', 'published_at', 'url', 'embed_data', 'embed_url', 'is_public'], # 'content' is usually HTML
-                    'user': ['full_name'],
-                    'attachment': ['name', 'url'], # For attachments
-                    'media': ['download_url', 'file_name', 'mimetype'] # For images often under 'images' relationship or via media API
-                }
-            )
+            try:
+                response = api_client.get_posts_by_campaign(
+                    campaign_id,
+                    params={'page[cursor]': cursor if cursor else '', 'sort': '-published_at'},
+                    includes=['user', 'images', 'attachments'], # 'images' for post images, 'attachments' for other files
+                    fields={
+                        'post': ['title', 'content', 'published_at', 'url', 'embed_data', 'embed_url', 'is_public'], # 'content' is usually HTML
+                        'user': ['full_name'],
+                        'attachment': ['name', 'url'], # For attachments
+                        'media': ['download_url', 'file_name', 'mimetype'] # For images often under 'images' relationship or via media API
+                    }
+                )
+                # response.load() # Not always necessary, data() call below usually loads.
+            except AttributeError as e:
+                if 'get_posts_by_campaign' in str(e).lower(): # Make check case-insensitive
+                    print("\nERROR: Your version of the 'patreon' library is outdated and missing the 'get_posts_by_campaign' feature.")
+                    print("This is essential for fetching posts.")
+                    print("Please update the library by running: pip install --upgrade patreon")
+                    print(f"Details: {e}\n")
+                else:
+                    # An AttributeError not related to get_posts_by_campaign occurred
+                    print(f"An unexpected AttributeError occurred during API call setup or execution: {e}")
+                    print(traceback.format_exc())
+                return # Exit fetch_posts if this critical call fails
 
             posts_data = response.data()
             if not posts_data:
@@ -490,7 +503,7 @@ if __name__ == "__main__":
             print(f"An AttributeError occurred while fetching user identity: {e}")
             print("This might be due to an outdated 'patreon' library. Try running: pip install --upgrade patreon")
         except Exception as e:
-            print(f"An unexpected error occurred while fetching user identity: {e}")
+            print(f"An unexpected error occurred in main fetch_posts loop: {e}")
             print(traceback.format_exc())
 
 
